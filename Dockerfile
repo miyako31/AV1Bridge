@@ -17,23 +17,42 @@ FROM bluenviron/mediamtx:1 AS mediamtx
 # whatever's newest upstream -- including AV1 RTP support, and libdav1d
 # (AV1 decode) / libx264 (H.264 encode) which it also ships with.
 # The "latest" tag is a stable, permanent URL (not a version number).
-FROM debian:13-slim AS ffmpeg-fetch
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      curl xz-utils ca-certificates \
+#
+# The full archive also contains ffplay, docs, man pages, static libs,
+# and headers we don't need (several hundred MB once extracted) -- only
+# bin/ffmpeg and bin/ffprobe are pulled out of it. The archive's
+# top-level directory name changes on every build (it embeds a git
+# commit hash), so it's read from the archive itself rather than
+# hardcoded. This matters on small-disk VPS instances.
+FROM alpine:3.22 AS ffmpeg-fetch
+RUN apk add --no-cache curl tar xz \
     && curl -fsSL \
       https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
       -o /tmp/ffmpeg.tar.xz \
+    && TOPDIR="$(tar -tf /tmp/ffmpeg.tar.xz | head -1 | cut -d/ -f1)" \
     && mkdir -p /tmp/ffmpeg \
-    && tar -xJf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg --strip-components=1 \
-    && rm -rf /var/lib/apt/lists/* /tmp/ffmpeg.tar.xz
+    && tar -xf /tmp/ffmpeg.tar.xz -C /tmp/ffmpeg "$TOPDIR/bin/ffmpeg" "$TOPDIR/bin/ffprobe" \
+    && mv "/tmp/ffmpeg/$TOPDIR/bin/ffmpeg" /tmp/ffmpeg/ffmpeg \
+    && mv "/tmp/ffmpeg/$TOPDIR/bin/ffprobe" /tmp/ffmpeg/ffprobe \
+    && rm -rf "/tmp/ffmpeg/$TOPDIR" /tmp/ffmpeg.tar.xz
 
-FROM alpine:3.22
+FROM debian:13-slim
 
-RUN apk add --no-cache ca-certificates
+# ffmpeg's codec libraries (libx264, libdav1d, etc.) are statically
+# linked into the binary itself, but the binary still dynamically links
+# against the base C library at runtime (confirmed via `ldd`: only
+# libc/libm/libpthread/libgcc_s -- nothing codec-related). Alpine uses
+# musl instead of glibc and has no compatible dynamic linker for this
+# binary at all, so the final image needs to be glibc-based. Debian's
+# own -slim variant already ships everything ffmpeg needs here with no
+# extra packages required.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=mediamtx /mediamtx /mediamtx
-COPY --from=ffmpeg-fetch /tmp/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffmpeg-fetch /tmp/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=ffmpeg-fetch /tmp/ffmpeg/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg-fetch /tmp/ffmpeg/ffprobe /usr/local/bin/ffprobe
 COPY mediamtx.yml /mediamtx.yml
 
 ENTRYPOINT ["/mediamtx"]

@@ -37,7 +37,7 @@ rtmpServerCert: /certs/server.crt
 rtspAddress: 127.0.0.1:8554
 
 # HTTP API, used only for local debugging (e.g. from inside the container
-# via `docker compose exec relay wget -qO- 127.0.0.1:9997/v3/paths/list`).
+# via `docker compose exec relay curl -s 127.0.0.1:9997/v3/paths/list`).
 # Bound to loopback, so it is never exposed to the host or the internet.
 api: yes
 apiAddress: 127.0.0.1:9997

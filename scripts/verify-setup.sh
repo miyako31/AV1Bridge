@@ -21,7 +21,7 @@ echo
 
 echo "== 4. Is OBS currently publishing to /home? =="
 echo "(queried via the loopback-only API from inside the container)"
-docker compose exec relay wget -qO- http://127.0.0.1:9997/v3/paths/list 2>/dev/null \
+docker compose exec relay curl -s http://127.0.0.1:9997/v3/paths/list \
   || echo "  No response -- either the container isn't up yet, or nothing has published yet."
 echo
 
