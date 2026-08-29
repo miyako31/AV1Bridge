@@ -88,13 +88,19 @@ Since Let's Encrypt can't issue certificates for bare IP addresses,
 step 3 below.
 
 Certificates expire after 90 days. Set up a cron job to renew them
-automatically:
+automatically. `renew-cert.sh` calls `sudo` internally (to reclaim
+ownership of the files certbot's container writes as root), so it
+needs to run from **root's** crontab, not your regular user's:
 
 ```bash
-crontab -e
+sudo crontab -e
 # add:
 0 4 * * * /home/debian/AV1Bridge/scripts/renew-cert.sh >> /home/debian/AV1Bridge/renew.log 2>&1
 ```
+
+(If you instead add this to your own user's crontab, the `sudo` call
+inside the script will hang waiting for a password that never comes,
+since cron has no terminal to prompt on.)
 
 `scripts/generate-certs.sh` (self-signed) is kept in the repo only as a
 fallback for local testing with a client that isn't OBS (e.g. `ffplay`

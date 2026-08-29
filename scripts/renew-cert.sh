@@ -29,6 +29,11 @@ docker run --rm \
   infinityofspace/certbot_dns_duckdns:latest \
   renew --quiet
 
+# The certbot container runs as root, so reclaim ownership before
+# touching these files as the regular host user (needed whether or not
+# a renewal actually happened this run).
+sudo chown -R "$(id -u):$(id -g)" letsencrypt
+
 # Only redeploy if the live cert is actually newer than what's currently
 # in ./certs -- avoids restarting the stream on every no-op cron run.
 if [ "letsencrypt/live/${DUCKDNS_DOMAIN}/fullchain.pem" -nt "certs/server.crt" ]; then

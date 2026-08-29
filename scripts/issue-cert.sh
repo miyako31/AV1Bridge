@@ -39,6 +39,10 @@ docker run --rm \
   -d "${DUCKDNS_DOMAIN}"
 
 echo "Deploying certificate into ./certs and reloading the relay..."
+# The certbot container runs as root, so everything it wrote under
+# ./letsencrypt is root-owned on the host. Reclaim it so this script
+# (and cron, for renew-cert.sh) can read it without sudo going forward.
+sudo chown -R "$(id -u):$(id -g)" letsencrypt
 cp "letsencrypt/live/${DUCKDNS_DOMAIN}/fullchain.pem" certs/server.crt
 cp "letsencrypt/live/${DUCKDNS_DOMAIN}/privkey.pem" certs/server.key
 docker compose restart relay
