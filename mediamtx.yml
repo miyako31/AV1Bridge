@@ -88,10 +88,21 @@ paths:
     # result to Twitch as a standard RTMP stream.
     #
     # Tuning notes:
-    #   - preset veryfast/tune zerolatency: reasonable starting point for
-    #     a software real-time transcode; drop to superfast/ultrafast
-    #     first if the cloud CPU can't keep up (watch ffmpeg's `speed=`
-    #     in `docker compose logs -f relay` -- it must stay >= 1.0x).
+    #   - preset controls speed/efficiency; -threads 0 lets libx264 use
+    #     every available core. Deliberately NOT using "-tune
+    #     zerolatency" here: it zeroes x264's lookahead buffer, which as
+    #     a side effect forces single-threaded encoding (frame-level
+    #     parallelism has nothing to pipeline across with zero lookahead)
+    #     -- fine for sub-frame-latency use cases, but it means a single
+    #     CPU core has to encode 1080p30 alone in real time, which most
+    #     cloud vCPUs can't sustain (you'll see ffmpeg's speed= drift
+    #     below 1.0x while overall CPU usage looks unremarkable, because
+    #     only one core is actually pegged). Dropping the tune costs a
+    #     small amount of encoding latency (roughly a second, from frame
+    #     buffering) in exchange for using every core -- an easy trade
+    #     for a personal Twitch stream where sub-second latency doesn't
+    #     matter. If you SEE all cores maxed out and still can't keep up,
+    #     that's when to drop preset speed or resolution/fps instead.
     #   - -g/-keyint_min give a 2-second keyframe interval at whatever
     #     frame rate you're testing, matching Twitch's recommendation.
     #   - Resolution/frame rate are NOT set here -- they simply follow
@@ -99,7 +110,7 @@ paths:
     #     below are what you'll be tuning while testing different presets.
     runOnAvailable: >
       sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
-      -c:v libx264 -preset ${X264_PRESET} -tune zerolatency
+      -c:v libx264 -preset ${X264_PRESET} -threads 0
       -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
       -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
       -c:a aac -b:a 160k -ar 44100

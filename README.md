@@ -190,7 +190,12 @@ You'll need to find the ceiling experimentally — here's the loop:
    value — as long as it stays at or above `1.0x`, the cloud CPU is
    keeping up in real time. Below `1.0x` means growing latency and
    buffering.
-3. Watch cloud CPU with `htop`/`top` alongside it.
+3. Watch cloud CPU with `htop` alongside it -- press `t` or check the
+   per-core view, not just the aggregate percentage. libx264 with
+   multiple threads (the default here) can peg one or two cores while
+   the overall/averaged CPU number still looks unremarkable on a
+   many-core box, which is easy to misread as "there's plenty of
+   headroom" when there isn't.
 4. If `speed=` has headroom, raise `OUTPUT_VIDEO_BITRATE` and/or the
    resolution/fps in `.env` (matching on the OBS side), then:
    ```bash
@@ -200,7 +205,12 @@ You'll need to find the ceiling experimentally — here's the loop:
    Software `libx264` encoding is almost always the bottleneck before
    `dav1d` decoding is, so if you run out of headroom, try
    `X264_PRESET=superfast` or `ultrafast` in `.env` before giving up
-   resolution/fps.
+   resolution/fps. (Don't add `-tune zerolatency` back into
+   `mediamtx.yml` unless you specifically need sub-second latency and
+   have CPU to spare -- it forces libx264 down to a single thread by
+   zeroing its lookahead buffer, which tanks real-time throughput on
+   most cloud vCPUs; that's what caused speed= to decay to ~0.1x during
+   initial setup.)
 6. Separately, confirm your home upload isn't the limiter: OBS's Stats
    dock shows dropped frames due to network congestion — that's a
    home-bandwidth problem, not a cloud-CPU one.
