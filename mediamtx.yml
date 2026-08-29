@@ -11,6 +11,7 @@ rtsp: no
 hls: no
 webrtc: no
 srt: no
+moq: no
 
 rtmp: yes
 
@@ -18,7 +19,7 @@ rtmp: yes
 # same time, on two different addresses:
 #   - rtmpAddress (plaintext) is bound to 127.0.0.1 only, so it is never
 #     reachable from outside the container. It exists purely so the
-#     ffmpeg process launched by runOnReady (below) can pull the stream
+#     ffmpeg process launched by runOnAvailable (below) can pull the stream
 #     back out over loopback without dealing with the TLS certificate.
 #   - rtmpsAddress (encrypted) is the ONLY port docker-compose.yml
 #     publishes to the host, and therefore the only one that needs to be
@@ -54,10 +55,17 @@ authInternalUsers:
     permissions:
       - action: publish
         path: home
+  # Anonymous/unauthenticated access, restricted to READ on path "home" only.
+  # This is what lets the runOnAvailable ffmpeg process below pull the stream
+  # back out over the internal loopback RTMP listener (127.0.0.1:1935,
+  # never exposed outside the container) without needing credentials of
+  # its own. Publishing still always requires the real credentials above.
   - user: any
     pass:
     ips: []
-    permissions: []
+    permissions:
+      - action: read
+        path: home
 
 ###############################################
 # Path-specific settings
@@ -82,11 +90,11 @@ paths:
     #   - Resolution/frame rate are NOT set here -- they simply follow
     #     whatever OBS sends. OUTPUT_VIDEO_BITRATE and OUTPUT_KEYFRAME_INTERVAL
     #     below are what you'll be tuning while testing different presets.
-    runOnReady: >
+    runOnAvailable: >
       sh -c "ffmpeg -nostdin -i rtmp://127.0.0.1:1935/home
       -c:v libx264 -preset ${X264_PRESET} -tune zerolatency
       -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
       -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
       -c:a aac -b:a 160k -ar 44100
       -f flv rtmp://live.twitch.tv/app/${TWITCH_STREAM_KEY}"
-    runOnReadyRestart: yes
+    runOnAvailableRestart: yes
