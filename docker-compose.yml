@@ -1,0 +1,35 @@
+services:
+  relay:
+    build: .
+    container_name: av1-relay
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # MediaMTX does not read ${VAR} placeholders written inside
+      # mediamtx.yml itself -- credentials are injected here instead,
+      # using its documented MTX_<PARAMNAME> override mechanism.
+      - MTX_AUTHINTERNALUSERS_0_USER=${MTX_PUBLISH_USER}
+      - MTX_AUTHINTERNALUSERS_0_PASS=${MTX_PUBLISH_PASS}
+    ports:
+      # This is the ONLY port that needs to be opened in the cloud
+      # firewall (RTMPS ingest from OBS at home). Change INGEST_PORT in
+      # .env if your provider assigns you a specific port instead of
+      # letting you pick one.
+      - "${INGEST_PORT:-1936}:1936/tcp"
+      #
+      # NOTE ON THE SECOND ALLOWED PORT: it is intentionally left unused.
+      # The API (mediamtx.yml: apiAddress 127.0.0.1:9997) is bound to
+      # loopback only, so it never needs a published port at all -- reach
+      # it for debugging via an SSH tunnel instead:
+      #   ssh -L 9997:127.0.0.1:9997 <user>@<server>
+      # then open http://127.0.0.1:9997/v3/paths/list on your own machine.
+      # That keeps the debug surface at zero extra open ports, and leaves
+      # your second available port free for whatever you need later.
+    volumes:
+      - ./certs:/certs:ro
+    networks:
+      - relay-net
+
+networks:
+  relay-net:
+    driver: bridge

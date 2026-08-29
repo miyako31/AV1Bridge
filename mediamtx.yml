@@ -1,0 +1,92 @@
+###############################################
+# Global settings
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+# We only need RTMP. Everything else is disabled to keep the attack
+# surface -- and the number of listening ports -- as small as possible.
+rtsp: no
+hls: no
+webrtc: no
+srt: no
+
+rtmp: yes
+
+# "optional" lets the RTMP server accept plaintext RTMP and RTMPS at the
+# same time, on two different addresses:
+#   - rtmpAddress (plaintext) is bound to 127.0.0.1 only, so it is never
+#     reachable from outside the container. It exists purely so the
+#     ffmpeg process launched by runOnReady (below) can pull the stream
+#     back out over loopback without dealing with the TLS certificate.
+#   - rtmpsAddress (encrypted) is the ONLY port docker-compose.yml
+#     publishes to the host, and therefore the only one that needs to be
+#     opened in the cloud firewall. This is what OBS connects to.
+rtmpEncryption: optional
+rtmpAddress: 127.0.0.1:1935
+rtmpsAddress: :1936
+rtmpServerKey: /certs/server.key
+rtmpServerCert: /certs/server.crt
+
+# HTTP API, used only for local debugging (e.g. from inside the container
+# via `docker compose exec relay wget -qO- 127.0.0.1:9997/v3/paths/list`).
+# Bound to loopback, so it is never exposed to the host or the internet.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+###############################################
+# Authentication
+# Defense in depth on top of RTMPS: even if someone reaches the port,
+# they still need the publish credentials to start a stream.
+#
+# IMPORTANT: MediaMTX does NOT expand ${VAR} placeholders written directly
+# inside mediamtx.yml -- the values below are overridden at container
+# startup via the MTX_AUTHINTERNALUSERS_0_USER / MTX_AUTHINTERNALUSERS_0_PASS
+# environment variables (set in docker-compose.yml from your .env file).
+# The "placeholder" strings here are never actually used.
+###############################################
+authMethod: internal
+authInternalUsers:
+  - user: placeholder
+    pass: placeholder
+    ips: []
+    permissions:
+      - action: publish
+        path: home
+  - user: any
+    pass:
+    ips: []
+    permissions: []
+
+###############################################
+# Path-specific settings
+###############################################
+
+paths:
+  # OBS publishes to: rtmps://<server>:1936
+  # Stream key:       home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>
+  home:
+    # Runs every time the "home" path starts being published (OBS connects).
+    # ffmpeg pulls the AV1 stream back over plain loopback RTMP, decodes it
+    # with libdav1d, re-encodes to H.264 with libx264 in real time, and
+    # pushes the result to Twitch as a standard RTMP stream.
+    #
+    # Tuning notes:
+    #   - preset veryfast/tune zerolatency: reasonable starting point for
+    #     a software real-time transcode; drop to superfast/ultrafast
+    #     first if the cloud CPU can't keep up (watch ffmpeg's `speed=`
+    #     in `docker compose logs -f relay` -- it must stay >= 1.0x).
+    #   - -g/-keyint_min give a 2-second keyframe interval at whatever
+    #     frame rate you're testing, matching Twitch's recommendation.
+    #   - Resolution/frame rate are NOT set here -- they simply follow
+    #     whatever OBS sends. OUTPUT_VIDEO_BITRATE and OUTPUT_KEYFRAME_INTERVAL
+    #     below are what you'll be tuning while testing different presets.
+    runOnReady: >
+      sh -c "ffmpeg -nostdin -i rtmp://127.0.0.1:1935/home
+      -c:v libx264 -preset ${X264_PRESET} -tune zerolatency
+      -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
+      -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
+      -c:a aac -b:a 160k -ar 44100
+      -f flv rtmp://live.twitch.tv/app/${TWITCH_STREAM_KEY}"
+    runOnReadyRestart: yes
