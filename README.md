@@ -194,7 +194,7 @@ You'll need to find the ceiling experimentally — here's the loop:
 4. If `speed=` has headroom, raise `OUTPUT_VIDEO_BITRATE` and/or the
    resolution/fps in `.env` (matching on the OBS side), then:
    ```bash
-   docker compose up -d   # picks up the new .env values, restarts ffmpeg via runOnReady
+   docker compose up -d   # picks up the new .env values, restarts ffmpeg via runOnAvailable
    ```
 5. Repeat until `speed=` sits right around `1.0x` with a small margin.
    Software `libx264` encoding is almost always the bottleneck before
