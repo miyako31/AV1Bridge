@@ -28,7 +28,9 @@ allows two open ports besides SSH.
 | `mediamtx.yml`                | Server config: RTMPS ingest, auth, the AV1→H.264 transcode hook   |
 | `docker-compose.yml`          | Runs the image, publishes exactly one port                        |
 | `.env.example`                | Template for secrets/tuning values — copy to `.env`               |
-| `scripts/generate-certs.sh`   | One-time self-signed cert generation for RTMPS                    |
+| `scripts/generate-certs.sh`   | Self-signed cert generator — local testing fallback only (not for OBS) |
+| `scripts/issue-cert.sh`       | One-time Let's Encrypt cert issuance via DuckDNS DNS-01                |
+| `scripts/renew-cert.sh`       | Cron-friendly cert renewal + redeploy                              |
 | `scripts/verify-setup.sh`     | Post-deploy sanity checks (codecs, stream status, live speed=)    |
 
 ## 1. Deploy
@@ -47,13 +49,57 @@ curl -fsSL https://get.docker.com | sh
 # Clone this repo onto the server, then:
 cd AV1Bridge
 cp .env.example .env
-nano .env   # fill in TWITCH_STREAM_KEY, MTX_PUBLISH_USER, MTX_PUBLISH_PASS
+nano .env   # fill in TWITCH_STREAM_KEY, MTX_PUBLISH_USER, MTX_PUBLISH_PASS,
+            # DUCKDNS_DOMAIN, DUCKDNS_TOKEN, CERT_EMAIL
 
-./scripts/generate-certs.sh   # one-time: creates certs/server.key + server.crt
+./scripts/issue-cert.sh       # one-time: gets a real Let's Encrypt cert via DuckDNS DNS-01
 
 docker compose up -d --build
 ./scripts/verify-setup.sh     # confirms AV1 decode/H.264 encode support, then tails logs
 ```
+
+### About the TLS certificate
+
+OBS's RTMPS client validates the server certificate against the system's
+trusted CA list, with **no option to accept a self-signed certificate**
+(unlike browsers, there's no "proceed anyway" button). A self-signed
+cert (as older versions of this README suggested via
+`scripts/generate-certs.sh`) will therefore always fail in OBS with
+*"The RTMP server sent an invalid SSL certificate."*
+
+`scripts/issue-cert.sh` solves this with a real Let's Encrypt
+certificate, obtained via the **DNS-01 challenge** against a free
+[DuckDNS](https://www.duckdns.org) subdomain. This matters specifically
+because DNS-01 needs **no inbound port at all** — it proves domain
+ownership via a DNS TXT record instead of an HTTP request, which is the
+only option that works on a shared-IPv4 VPS where you can't choose
+which port number gets mapped to you (HTTP-01/TLS-ALPN-01 both require
+the *global* port to be exactly 80 or 443, which such plans don't let
+you pick).
+
+Prerequisites before running it:
+1. Register a free subdomain at duckdns.org (e.g. `av1bridge.duckdns.org`)
+   and point it at your VPS's public IP.
+2. Put that domain, your DuckDNS token, and a contact email into `.env`
+   (`DUCKDNS_DOMAIN`, `DUCKDNS_TOKEN`, `CERT_EMAIL`).
+
+Since Let's Encrypt can't issue certificates for bare IP addresses,
+**OBS must connect using the domain name, not the server's IP** — see
+step 3 below.
+
+Certificates expire after 90 days. Set up a cron job to renew them
+automatically:
+
+```bash
+crontab -e
+# add:
+0 4 * * * /home/debian/AV1Bridge/scripts/renew-cert.sh >> /home/debian/AV1Bridge/renew.log 2>&1
+```
+
+`scripts/generate-certs.sh` (self-signed) is kept in the repo only as a
+fallback for local testing with a client that isn't OBS (e.g. `ffplay`
+or `ffmpeg` don't validate certs by default) — it will not work for an
+actual OBS→relay connection.
 
 ## 2. Firewall — open exactly one port
 
@@ -92,6 +138,15 @@ curl http://127.0.0.1:9997/v3/paths/list
 That keeps the open-port count at exactly one, and leaves your spare
 port free for whatever you need later.
 
+**If your provider uses NAT-style port forwarding** (a shared-IPv4 plan
+where you request an internal port and it assigns you an arbitrary
+*global* port, e.g. internal `1936` mapped to global `3163`): that's
+fine, RTMP/RTMPS doesn't care what port number it runs on. Just use
+whatever global port you were assigned when telling OBS where to
+connect (see step 3), and be aware this is exactly the situation where
+HTTP-01/TLS-ALPN-01 certificate validation would fail — it's why
+`scripts/issue-cert.sh` uses the DNS-01 challenge instead (see below).
+
 ## 3. Configure OBS (home side)
 
 Requires OBS 29+ for native AV1 encoding (Enhanced RTMP output).
@@ -105,15 +160,18 @@ Requires OBS 29+ for native AV1 encoding (Enhanced RTMP output).
   - Keyframe Interval: 2s
 - **Settings → Stream**
   - Service: `Custom...`
-  - Server: `rtmps://<cloud-server-ip>:1936/home`
+  - Server: `rtmps://<your-DUCKDNS_DOMAIN>:<your global/mapped INGEST_PORT>/home`
+    (use the domain name, not the server's IP — the certificate is
+    issued for the domain, and OBS will reject a domain/cert mismatch
+    just as strictly as it rejects a self-signed one)
   - Stream Key: leave blank
   - If OBS shows a "Use Authentication" option: enable it and enter the
     `MTX_PUBLISH_USER` / `MTX_PUBLISH_PASS` values from your `.env`
   - If it doesn't show that option, append the credentials to the
     server URL instead:
-    `rtmps://<cloud-server-ip>:1936/home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>`
-  - Since the certificate is self-signed, OBS may warn about an
-    untrusted certificate on first connect — this is expected; accept it.
+    `rtmps://<your-DUCKDNS_DOMAIN>:<port>/home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>`
+  - With a real Let's Encrypt certificate, OBS should connect with no
+    certificate warning at all.
 
 ## 4. Tuning procedure (360p60 → 1080p30)
 
