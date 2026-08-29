@@ -5,9 +5,10 @@
 logLevel: info
 logDestinations: [stdout]
 
-# We only need RTMP. Everything else is disabled to keep the attack
-# surface -- and the number of listening ports -- as small as possible.
-rtsp: no
+# We need RTMP(S) for ingest and RTSP for the internal AV1 hand-off to
+# ffmpeg (see note below on why). Everything else stays disabled to keep
+# the attack surface -- and the number of listening ports -- small.
+rtsp: yes
 hls: no
 webrtc: no
 srt: no
@@ -15,20 +16,25 @@ moq: no
 
 rtmp: yes
 
-# "optional" lets the RTMP server accept plaintext RTMP and RTMPS at the
-# same time, on two different addresses:
-#   - rtmpAddress (plaintext) is bound to 127.0.0.1 only, so it is never
-#     reachable from outside the container. It exists purely so the
-#     ffmpeg process launched by runOnAvailable (below) can pull the stream
-#     back out over loopback without dealing with the TLS certificate.
-#   - rtmpsAddress (encrypted) is the ONLY port docker-compose.yml
-#     publishes to the host, and therefore the only one that needs to be
-#     opened in the cloud firewall. This is what OBS connects to.
-rtmpEncryption: optional
-rtmpAddress: 127.0.0.1:1935
+# MediaMTX can RECEIVE AV1 over RTMP/RTMPS (used for the OBS ingest
+# below), but it cannot SERVE/read AV1 back out over RTMP -- its RTMP
+# output is H.264-only even with Enhanced RTMP. AV1 read-out only works
+# over RTSP/WebRTC/HLS. That's why the runOnAvailable ffmpeg process
+# below pulls the stream via RTSP instead of RTMP.
+#
+# Since nothing internal needs plain RTMP anymore, RTMP is RTMPS-only:
+# rtmpsAddress is the ONLY port docker-compose.yml publishes to the
+# host, and therefore the only one that needs to be opened in the cloud
+# firewall. This is what OBS connects to.
+rtmpEncryption: strict
 rtmpsAddress: :1936
 rtmpServerKey: /certs/server.key
 rtmpServerCert: /certs/server.crt
+
+# RTSP listener used ONLY for the internal ffmpeg hand-off above --
+# bound to loopback, so it is never reachable from outside the
+# container (and never published in docker-compose.yml either).
+rtspAddress: 127.0.0.1:8554
 
 # HTTP API, used only for local debugging (e.g. from inside the container
 # via `docker compose exec relay wget -qO- 127.0.0.1:9997/v3/paths/list`).
@@ -57,7 +63,7 @@ authInternalUsers:
         path: home
   # Anonymous/unauthenticated access, restricted to READ on path "home" only.
   # This is what lets the runOnAvailable ffmpeg process below pull the stream
-  # back out over the internal loopback RTMP listener (127.0.0.1:1935,
+  # back out over the internal loopback RTSP listener (127.0.0.1:8554,
   # never exposed outside the container) without needing credentials of
   # its own. Publishing still always requires the real credentials above.
   - user: any
@@ -76,9 +82,10 @@ paths:
   # Stream key:       home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>
   home:
     # Runs every time the "home" path starts being published (OBS connects).
-    # ffmpeg pulls the AV1 stream back over plain loopback RTMP, decodes it
-    # with libdav1d, re-encodes to H.264 with libx264 in real time, and
-    # pushes the result to Twitch as a standard RTMP stream.
+    # ffmpeg pulls the AV1 stream back via RTSP (loopback-only -- see the
+    # note above on why RTSP instead of RTMP), decodes it with libdav1d,
+    # re-encodes to H.264 with libx264 in real time, and pushes the
+    # result to Twitch as a standard RTMP stream.
     #
     # Tuning notes:
     #   - preset veryfast/tune zerolatency: reasonable starting point for
@@ -91,7 +98,7 @@ paths:
     #     whatever OBS sends. OUTPUT_VIDEO_BITRATE and OUTPUT_KEYFRAME_INTERVAL
     #     below are what you'll be tuning while testing different presets.
     runOnAvailable: >
-      sh -c "ffmpeg -nostdin -i rtmp://127.0.0.1:1935/home
+      sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
       -c:v libx264 -preset ${X264_PRESET} -tune zerolatency
       -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
       -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
