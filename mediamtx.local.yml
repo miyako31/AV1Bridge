@@ -36,15 +36,21 @@ paths:
   # OBS publishes to: rtmp://127.0.0.1:1935/home (or your LAN IP if
   # OBS runs on a different machine on the same network)
   home:
-    # Same decode/encode command as production, MINUS the push to
-    # Twitch -- output goes to a local file instead, so you can both
-    # watch ffmpeg's speed= AND play back the result afterward to
-    # check for visual stutter/dropped frames directly.
+    # Same decode/encode command as production, but writes the single
+    # encoded result to TWO places at once via ffmpeg's tee muxer: a
+    # local file (for frame-by-frame stutter inspection afterward) AND
+    # a real push to Twitch (to confirm actual delivery is smooth too).
+    # This validates the full pipeline end-to-end using whatever CPU
+    # you run this on, independent of the VPS.
+    #
+    # TWITCH_STREAM_KEY comes from the same .env used for the
+    # production docker-compose.yml -- no separate variable needed.
     runOnAvailable: >
       sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
       -c:v libx264 -preset ${X264_PRESET} -threads 0
       -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
       -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
       -c:a aac -b:a 160k -ar 44100
-      -f flv /recordings/local-test.flv"
+      -f tee -map 0:v -map 0:a
+      \"[f=flv]rtmp://live.twitch.tv/app/${TWITCH_STREAM_KEY}\"'|'\"[f=flv]/recordings/local-test.flv\""
     runOnAvailableRestart: yes
