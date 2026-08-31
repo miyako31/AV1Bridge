@@ -1,0 +1,25 @@
+services:
+  relay-local:
+    build: .
+    container_name: av1-relay-local
+    env_file: .env
+    volumes:
+      # Overrides the mediamtx.yml baked into the image at build time --
+      # no separate Dockerfile needed for the local variant.
+      - ./mediamtx.local.yml:/mediamtx.yml:ro
+      - ./local-test-output:/recordings
+    ports:
+      # Plain RTMP, no TLS, no auth. Fine for same-machine or LAN-only
+      # testing. NEVER forward this port on a router/cloud firewall to
+      # the internet -- use docker-compose.yml (RTMPS + auth) for
+      # anything internet-facing.
+      #
+      # If OBS runs on this exact same machine, you can tighten this to
+      # "127.0.0.1:1935:1935" so it's not reachable from your LAN at all.
+      - "1935:1935/tcp"
+    networks:
+      - relay-local-net
+
+networks:
+  relay-local-net:
+    driver: bridge

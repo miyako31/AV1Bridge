@@ -1,0 +1,50 @@
+###############################################
+# LOCAL TEST CONFIG -- NOT FOR INTERNET-FACING USE
+#
+# Strips out everything that's specific to the "internet-facing VPS"
+# problem (RTMPS/Let's Encrypt, publish auth) so you can test the one
+# question that matters here: does the AV1-decode -> H.264-encode
+# pipeline itself run smoothly given enough CPU? Run this on the same
+# machine as OBS (or on your LAN), never expose it to the internet.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: yes
+hls: no
+webrtc: no
+srt: no
+moq: no
+
+rtmp: yes
+# Plain, unencrypted, unauthenticated RTMP on the default port. Fine
+# for same-machine/LAN-only testing; this is exactly what the real
+# deployment avoids doing over the internet (see mediamtx.yml).
+rtmpAddress: :1935
+
+rtspAddress: 127.0.0.1:8554
+
+api: yes
+apiAddress: 127.0.0.1:9997
+
+# No authMethod/authInternalUsers block at all -- MediaMTX defaults to
+# allowing publish/read to everyone when auth isn't configured. That's
+# only acceptable because this listener is local-only.
+
+paths:
+  # OBS publishes to: rtmp://127.0.0.1:1935/home (or your LAN IP if
+  # OBS runs on a different machine on the same network)
+  home:
+    # Same decode/encode command as production, MINUS the push to
+    # Twitch -- output goes to a local file instead, so you can both
+    # watch ffmpeg's speed= AND play back the result afterward to
+    # check for visual stutter/dropped frames directly.
+    runOnAvailable: >
+      sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
+      -c:v libx264 -preset ${X264_PRESET} -threads 0
+      -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
+      -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
+      -c:a aac -b:a 160k -ar 44100
+      -f flv /recordings/local-test.flv"
+    runOnAvailableRestart: yes

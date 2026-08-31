@@ -2,3 +2,5 @@
 certs/
 letsencrypt/
 renew.log
+local-test-output/*
+!local-test-output/.gitkeep

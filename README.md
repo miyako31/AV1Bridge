@@ -31,7 +31,10 @@ allows two open ports besides SSH.
 | `scripts/generate-certs.sh`   | Self-signed cert generator — local testing fallback only (not for OBS) |
 | `scripts/issue-cert.sh`       | One-time Let's Encrypt cert issuance via DuckDNS DNS-01                |
 | `scripts/renew-cert.sh`       | Cron-friendly cert renewal + redeploy                              |
+| `scripts/benchmark-cpu.sh`    | Pure CPU throughput test (no OBS/network) -- see "Diagnosing" below |
 | `scripts/verify-setup.sh`     | Post-deploy sanity checks (codecs, stream status, live speed=)    |
+| `mediamtx.local.yml`          | No-TLS/no-auth config for local pipeline testing (LAN/localhost only) |
+| `docker-compose.local.yml`    | Runs the local variant above -- see "Diagnosing" below            |
 
 ## 1. Deploy
 
@@ -217,6 +220,53 @@ You'll need to find the ceiling experimentally — here's the loop:
 
 `scripts/verify-setup.sh` automates steps 1–2 of this check (codec
 sanity + tailing the live `speed=` output) each time you redeploy.
+
+## 5. Diagnosing "is this the design, or is it my VPS?"
+
+If `speed=` won't stabilize even at low resolutions, and cloud CPU
+usage doesn't look pegged either, you may be on a constrained VPS
+(single core, low scheduling priority, noisy-neighbor CPU steal) where
+the aggregate CPU% is misleading. Two tools help tell "this pipeline
+fundamentally works, your VPS just can't do it" apart from "something
+in the setup itself is broken":
+
+**`scripts/benchmark-cpu.sh`** — pure CPU throughput test, no OBS or
+network involved at all. Generates short synthetic AV1 clips inside the
+relay container and runs them through the exact same decode/encode
+command as production, with no real-time pacing on the input, so
+`speed=` directly reports the sustained multiple of real-time that CPU
+can do at each resolution/fps:
+
+```bash
+./scripts/benchmark-cpu.sh
+```
+
+If `top`/`vmstat` shows a nonzero `st` (steal) column, that CPU time is
+being taken by the hypervisor for other tenants and isn't something any
+amount of local tuning can get back — worth asking your provider about
+before concluding the resolution itself is the problem.
+
+**`docker-compose.local.yml`** — runs the *actual* live pipeline (real
+OBS input, real AV1 decode, real libx264 encode) on whatever machine
+you run it on, with no TLS/auth/DuckDNS involved at all. This answers
+"does this whole design run smoothly given enough CPU" directly, using
+your own gaming PC (or any other machine) as the relay instead of the
+constrained VPS:
+
+```bash
+docker compose -f docker-compose.local.yml up -d --build
+```
+
+Point OBS at `rtmp://127.0.0.1:1935/home` (or the machine's LAN IP, if
+OBS runs on a different device) — no stream key, no authentication.
+Output goes to `./local-test-output/local-test.flv` instead of Twitch,
+so nothing goes live; play that file back afterward to check for
+stutter/dropped frames directly, in addition to watching `speed=` in
+`docker compose -f docker-compose.local.yml logs -f relay-local`.
+
+**Never expose `docker-compose.local.yml`'s port to the internet** —
+it has no encryption and no authentication by design, since the whole
+point is to remove every variable except "is there enough CPU."
 
 ## Notes
 
