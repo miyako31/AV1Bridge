@@ -241,14 +241,20 @@ in the setup itself is broken" -- each strips away a different layer:
 
 **`scripts/benchmark-cpu.sh`** — pure CPU throughput test, no OBS or
 network involved at all. Generates short synthetic AV1 clips inside the
-relay container and runs them through the exact same decode/encode
-command as production, with no real-time pacing on the input, so
-`speed=` directly reports the sustained multiple of real-time that CPU
-can do at each resolution/fps:
+relay container and runs each one twice: decode-only (dav1d, no
+encoder at all) and the full decode+encode pipeline used in
+production. With no real-time pacing on the input, each `speed=`
+directly reports the sustained multiple of real-time that CPU can do:
 
 ```bash
 ./scripts/benchmark-cpu.sh
 ```
+
+A DECODE ONLY column far above DECODE+ENCODE confirms libx264
+(encoding) is the actual bottleneck, not dav1d (decoding) — true for
+almost any real-world setup, since encoding does far more
+computational work (motion search, mode decisions, rate control) than
+decoding does.
 
 If `top`/`vmstat` shows a nonzero `st` (steal) column, that CPU time is
 being taken by the hypervisor for other tenants and isn't something any

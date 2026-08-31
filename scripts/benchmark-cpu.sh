@@ -15,6 +15,13 @@
 # to spare; speed=0.6x means it would fall behind exactly like the
 # live run did.
 #
+# Also runs a DECODE-ONLY pass on the same clip (dav1d only, no
+# encoder at all -- `ffmpeg -i ... -f null -` with no -c:v, the
+# standard technique for isolating decode cost) so you can see how much
+# of the total cost is decode vs encode. In practice libx264 is almost
+# always the dominant cost; a DECODE speed= far above the DECODE+ENCODE
+# speed= confirms encoding is what's actually limiting you, not dav1d.
+#
 # Runs inside the relay container so it uses the exact same ffmpeg
 # binary/build as production.
 set -e
@@ -45,8 +52,8 @@ echo "No -re on the input -- ffmpeg runs flat out, so speed= directly reflects"
 echo "the sustained multiple of real-time this CPU can do at each setting."
 echo
 
-printf "%-16s %-10s %s\n" "RESOLUTION@FPS" "BITRATE" "RESULT"
-printf "%-16s %-10s %s\n" "--------------" "-------" "------"
+printf "%-16s %-10s %-14s %s\n" "RESOLUTION@FPS" "BITRATE" "DECODE ONLY" "DECODE+ENCODE"
+printf "%-16s %-10s %-14s %s\n" "--------------" "-------" "-----------" "-------------"
 
 for entry in $RESOLUTIONS; do
   res_fps="${entry%%:*}"
@@ -66,20 +73,31 @@ for entry in $RESOLUTIONS; do
     -c:v libsvtav1 -preset 10 \
     -f matroska /tmp/bench.mkv
 
-  # 2. Run the actual transcode pipeline, flat out, and capture the
-  #    final speed= value.
-  result=$(docker compose exec -T relay ffmpeg -hide_banner -nostdin \
+  # 2. Decode-only pass: no -c:v at all, so ffmpeg decodes every frame
+  #    with dav1d and immediately discards it into the null muxer --
+  #    no encoder CPU cost included at all.
+  decode_result=$(docker compose exec -T relay ffmpeg -hide_banner -nostdin \
+    -i /tmp/bench.mkv \
+    -an -f null - 2>&1 | grep -o 'speed=[0-9.]*x' | tail -1)
+
+  # 3. Full pipeline: decode + libx264 encode, same as production.
+  full_result=$(docker compose exec -T relay ffmpeg -hide_banner -nostdin \
     -i /tmp/bench.mkv \
     -c:v libx264 -preset "$X264_PRESET" -threads 0 \
     -b:v "$bitrate" -maxrate "$bitrate" -bufsize "$((${bitrate%k} * 2))k" \
     -g "$fps" -keyint_min "$fps" -sc_threshold 0 \
     -an -f null - 2>&1 | grep -o 'speed=[0-9.]*x' | tail -1)
 
-  printf "%-16s %-10s %s\n" "${res}@${fps}" "$bitrate" "${result:-FAILED}"
+  printf "%-16s %-10s %-14s %s\n" "${res}@${fps}" "$bitrate" "${decode_result:-FAILED}" "${full_result:-FAILED}"
 done
 
 echo
 echo "speed= >= 1.0x means this CPU can sustain that resolution/fps in real"
-echo "time with software encoding alone. Below 1.0x means it can't, and"
-echo "no amount of network/RTSP tuning will fix that -- only a lower"
-echo "resolution/fps, a faster X264_PRESET, or more/faster CPU will."
+echo "time. Below 1.0x means it can't, and no amount of network/RTSP tuning"
+echo "will fix that -- only a lower resolution/fps, a faster X264_PRESET, or"
+echo "more/faster CPU will."
+echo
+echo "If DECODE ONLY is much higher than DECODE+ENCODE, libx264 (encoding) is"
+echo "the bottleneck, not dav1d (decoding) -- this is the case for almost"
+echo "every real-world setup, since encoding does far more computational work"
+echo "(motion search, mode decisions, rate control) than decoding does."
