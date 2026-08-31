@@ -1,0 +1,24 @@
+services:
+  relay-no-tls:
+    build: .
+    container_name: av1-relay-no-tls
+    env_file: .env
+    environment:
+      # Same auth injection mechanism as production docker-compose.yml.
+      - MTX_AUTHINTERNALUSERS_0_USER=${MTX_PUBLISH_USER}
+      - MTX_AUTHINTERNALUSERS_0_PASS=${MTX_PUBLISH_PASS}
+    volumes:
+      # Overrides the mediamtx.yml baked into the image at build time --
+      # no separate Dockerfile needed.
+      - ./mediamtx.no-tls.yml:/mediamtx.yml:ro
+    ports:
+      # Plain RTMP, no TLS. Fine for same-machine or LAN-only testing.
+      # NEVER forward this on a router/cloud firewall to the internet --
+      # use docker-compose.yml (RTMPS) for anything internet-facing.
+      - "1935:1935/tcp"
+    networks:
+      - relay-no-tls-net
+
+networks:
+  relay-no-tls-net:
+    driver: bridge

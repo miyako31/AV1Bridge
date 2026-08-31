@@ -1,0 +1,83 @@
+###############################################
+# SAME PROCESSING PATH AS PRODUCTION -- TLS DISABLED ONLY
+#
+# This is mediamtx.yml with exactly one change: the OBS-to-relay leg is
+# plain RTMP instead of RTMPS, so you can connect by IP address without
+# copying certs or editing /etc/hosts. Publish authentication, the
+# internal RTSP hand-off to ffmpeg, and the direct push to Twitch are
+# all identical to production -- this isolates "is TLS/DuckDNS the
+# issue" from everything else, and lets you test on stronger local
+# hardware through the exact same code path the cloud VPS uses.
+#
+# NOT for internet exposure -- only the encryption differs from
+# mediamtx.yml, not the security model. Use mediamtx.yml (RTMPS) for
+# anything reachable from the internet.
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+rtsp: yes
+hls: no
+webrtc: no
+srt: no
+moq: no
+
+rtmp: yes
+# Plain RTMP, no TLS. Everything else below is unchanged from mediamtx.yml.
+rtmpAddress: :1935
+
+# RTSP listener used ONLY for the internal ffmpeg hand-off below --
+# bound to loopback, so it is never reachable from outside the
+# container. Identical to mediamtx.yml.
+rtspAddress: 127.0.0.1:8554
+
+# HTTP API, used only for local debugging. Bound to loopback, same as
+# mediamtx.yml.
+api: yes
+apiAddress: 127.0.0.1:9997
+
+###############################################
+# Authentication -- identical to mediamtx.yml. Publish still requires
+# real credentials; only the transport carrying them is now unencrypted
+# (fine for same-machine/LAN testing, not for the internet).
+#
+# IMPORTANT: MediaMTX does NOT expand ${VAR} placeholders written directly
+# inside mediamtx.yml -- the values below are overridden at container
+# startup via the MTX_AUTHINTERNALUSERS_0_USER / MTX_AUTHINTERNALUSERS_0_PASS
+# environment variables (set in docker-compose.no-tls.yml from your .env file).
+# The "placeholder" strings here are never actually used.
+###############################################
+authMethod: internal
+authInternalUsers:
+  - user: placeholder
+    pass: placeholder
+    ips: []
+    permissions:
+      - action: publish
+        path: home
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path: home
+
+###############################################
+# Path-specific settings -- identical processing to mediamtx.yml,
+# including the direct push straight to Twitch (no local file tee;
+# that's a different test, see docker-compose.local.yml).
+###############################################
+
+paths:
+  # OBS publishes to: rtmp://<this-machine's-IP>:1935/home
+  # Stream key:       home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>
+  home:
+    runOnAvailable: >
+      sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
+      -c:v libx264 -preset ${X264_PRESET} -threads 0
+      -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
+      -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
+      -c:a aac -b:a 160k -ar 44100
+      -f flv rtmp://live.twitch.tv/app/${TWITCH_STREAM_KEY}"
+    runOnAvailableRestart: yes

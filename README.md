@@ -35,6 +35,8 @@ allows two open ports besides SSH.
 | `scripts/verify-setup.sh`     | Post-deploy sanity checks (codecs, stream status, live speed=)    |
 | `mediamtx.local.yml`          | No-TLS/no-auth config for local pipeline testing (LAN/localhost only) |
 | `docker-compose.local.yml`    | Runs the local variant above -- see "Diagnosing" below            |
+| `mediamtx.no-tls.yml`         | Same processing path as production, TLS removed -- see "Diagnosing" below |
+| `docker-compose.no-tls.yml`   | Runs the no-tls variant above                                      |
 
 ## 1. Deploy
 
@@ -226,9 +228,16 @@ sanity + tailing the live `speed=` output) each time you redeploy.
 If `speed=` won't stabilize even at low resolutions, and cloud CPU
 usage doesn't look pegged either, you may be on a constrained VPS
 (single core, low scheduling priority, noisy-neighbor CPU steal) where
-the aggregate CPU% is misleading. Two tools help tell "this pipeline
+the aggregate CPU% is misleading. Three tools help tell "this pipeline
 fundamentally works, your VPS just can't do it" apart from "something
-in the setup itself is broken":
+in the setup itself is broken" -- each strips away a different layer:
+
+| Tool | OBS input | Auth | TLS | Output |
+|---|---|---|---|---|
+| `scripts/benchmark-cpu.sh` | synthetic (no OBS) | n/a | n/a | none (`-f null`) |
+| `mediamtx.no-tls.yml` | real OBS | real | **none** | Twitch (real) |
+| `mediamtx.local.yml` | real OBS | none | none | Twitch + local file |
+| `mediamtx.yml` (production) | real OBS | real | real | Twitch (real) |
 
 **`scripts/benchmark-cpu.sh`** — pure CPU throughput test, no OBS or
 network involved at all. Generates short synthetic AV1 clips inside the
@@ -246,12 +255,28 @@ being taken by the hypervisor for other tenants and isn't something any
 amount of local tuning can get back — worth asking your provider about
 before concluding the resolution itself is the problem.
 
-**`docker-compose.local.yml`** — runs the *actual* live pipeline (real
-OBS input, real AV1 decode, real libx264 encode) on whatever machine
-you run it on, with no TLS/auth/DuckDNS involved at all. This answers
-"does this whole design run smoothly given enough CPU" directly, using
-your own gaming PC (or any other machine) as the relay instead of the
-constrained VPS:
+**`docker-compose.no-tls.yml`** — the exact same processing path as
+production (real publish auth, the RTSP hand-off to ffmpeg, a direct
+push to Twitch) with only the TLS leg removed, so you can connect by IP
+address without copying certs or editing `/etc/hosts`. Use this when
+you want to run the *real* code path on stronger local hardware and
+isolate "is TLS/DuckDNS involved in the problem" from everything else:
+
+```bash
+docker compose -f docker-compose.no-tls.yml up -d --build
+```
+
+Point OBS at `rtmp://<this-machine's-IP>:1935` with stream key
+`home?user=<MTX_PUBLISH_USER>&pass=<MTX_PUBLISH_PASS>` (same credential
+format as production, just unencrypted). Requires `TWITCH_STREAM_KEY`
+in `.env` — this pushes to Twitch for real, identically to production.
+Watch `docker compose -f docker-compose.no-tls.yml logs -f relay-no-tls`.
+
+**`docker-compose.local.yml`** — strips out auth as well as TLS, and
+writes to a local file in addition to Twitch (via ffmpeg's tee muxer),
+so you can inspect frame-by-frame stutter directly instead of only
+watching `speed=`. Use this for the most friction-free "does this
+design work at all given enough CPU" check:
 
 ```bash
 docker compose -f docker-compose.local.yml up -d --build
@@ -259,18 +284,14 @@ docker compose -f docker-compose.local.yml up -d --build
 
 Point OBS at `rtmp://127.0.0.1:1935/home` (or the machine's LAN IP, if
 OBS runs on a different device) — no stream key, no authentication.
-Requires `TWITCH_STREAM_KEY` to already be set in `.env` (same value
-used by production): ffmpeg's tee muxer encodes once and writes the
-result to **both** `./local-test-output/local-test.flv` **and** a real
-push to Twitch simultaneously, so this goes live on your channel. Play
-the local file back afterward to check for stutter/dropped frames
-frame-by-frame, and watch `speed=` in
-`docker compose -f docker-compose.local.yml logs -f relay-local`, in
-addition to checking the stream on Twitch directly.
+Output goes to both `./local-test-output/local-test.flv` and Twitch
+simultaneously. Watch `docker compose -f docker-compose.local.yml logs
+-f relay-local`.
 
-**Never expose `docker-compose.local.yml`'s port to the internet** —
-it has no encryption and no authentication by design, since the whole
-point is to remove every variable except "is there enough CPU."
+**Never expose `docker-compose.no-tls.yml` or `docker-compose.local.yml`'s
+ports to the internet** — neither has real transport encryption, since
+the whole point of both is to remove variables, not to be a second
+production deployment.
 
 ## Notes
 
