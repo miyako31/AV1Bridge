@@ -259,10 +259,14 @@ docker compose -f docker-compose.local.yml up -d --build
 
 Point OBS at `rtmp://127.0.0.1:1935/home` (or the machine's LAN IP, if
 OBS runs on a different device) — no stream key, no authentication.
-Output goes to `./local-test-output/local-test.flv` instead of Twitch,
-so nothing goes live; play that file back afterward to check for
-stutter/dropped frames directly, in addition to watching `speed=` in
-`docker compose -f docker-compose.local.yml logs -f relay-local`.
+Requires `TWITCH_STREAM_KEY` to already be set in `.env` (same value
+used by production): ffmpeg's tee muxer encodes once and writes the
+result to **both** `./local-test-output/local-test.flv` **and** a real
+push to Twitch simultaneously, so this goes live on your channel. Play
+the local file back afterward to check for stutter/dropped frames
+frame-by-frame, and watch `speed=` in
+`docker compose -f docker-compose.local.yml logs -f relay-local`, in
+addition to checking the stream on Twitch directly.
 
 **Never expose `docker-compose.local.yml`'s port to the internet** —
 it has no encryption and no authentication by design, since the whole
