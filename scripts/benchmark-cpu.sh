@@ -38,6 +38,42 @@ fi
 X264_PRESET="${X264_PRESET:-veryfast}"
 CLIP_SECONDS=12
 
+# Figure out which relay container (if any) is already running --
+# production, no-tls, or local all use the same ffmpeg build, so any of
+# them works for this benchmark. Detection is by container_name (fixed
+# in each compose file), not "docker compose ps", since relay-local/
+# relay-no-tls live in separate compose files this script isn't
+# otherwise pointed at.
+if docker ps --format '{{.Names}}' | grep -qx 'av1-relay'; then
+  COMPOSE_ARGS=""
+  SERVICE="relay"
+elif docker ps --format '{{.Names}}' | grep -qx 'av1-relay-no-tls'; then
+  COMPOSE_ARGS="-f docker-compose.no-tls.yml"
+  SERVICE="relay-no-tls"
+elif docker ps --format '{{.Names}}' | grep -qx 'av1-relay-local'; then
+  COMPOSE_ARGS="-f docker-compose.local.yml"
+  SERVICE="relay-local"
+else
+  echo "No relay container is running -- starting the production one (docker compose up -d)..."
+  docker compose up -d
+  COMPOSE_ARGS=""
+  SERVICE="relay"
+
+  # Give the container a moment to actually be ready for `exec` before
+  # the first real command below fails on a race.
+  tries=0
+  until docker compose exec -T "$SERVICE" true 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 15 ]; then
+      echo "Container did not become ready in time. Check 'docker compose logs relay'."
+      exit 1
+    fi
+    sleep 1
+  done
+fi
+echo "Using service: $SERVICE"
+echo
+
 # WIDTHxHEIGHT@FPS:BITRATE -- covers the 360p60 to 1080p30 range this
 # project targets. Edit this list to test other combinations.
 RESOLUTIONS="
@@ -67,7 +103,7 @@ for entry in $RESOLUTIONS; do
   #    SVT-AV1 preset 10 (fast) is used purely to build the fixture
   #    quickly -- it has no bearing on the actual benchmark, which
   #    exercises dav1d (decode) + libx264 (encode) only.
-  docker compose exec -T relay ffmpeg -y -hide_banner -loglevel error \
+  docker compose $COMPOSE_ARGS exec -T "$SERVICE" ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i "testsrc2=size=${width}x${height}:rate=${fps}" \
     -t "$CLIP_SECONDS" \
     -c:v libsvtav1 -preset 10 \
@@ -76,12 +112,12 @@ for entry in $RESOLUTIONS; do
   # 2. Decode-only pass: no -c:v at all, so ffmpeg decodes every frame
   #    with dav1d and immediately discards it into the null muxer --
   #    no encoder CPU cost included at all.
-  decode_result=$(docker compose exec -T relay ffmpeg -hide_banner -nostdin \
+  decode_result=$(docker compose $COMPOSE_ARGS exec -T "$SERVICE" ffmpeg -hide_banner -nostdin \
     -i /tmp/bench.mkv \
     -an -f null - 2>&1 | grep -o 'speed=[0-9.]*x' | tail -1)
 
   # 3. Full pipeline: decode + libx264 encode, same as production.
-  full_result=$(docker compose exec -T relay ffmpeg -hide_banner -nostdin \
+  full_result=$(docker compose $COMPOSE_ARGS exec -T "$SERVICE" ffmpeg -hide_banner -nostdin \
     -i /tmp/bench.mkv \
     -c:v libx264 -preset "$X264_PRESET" -threads 0 \
     -b:v "$bitrate" -maxrate "$bitrate" -bufsize "$((${bitrate%k} * 2))k" \
