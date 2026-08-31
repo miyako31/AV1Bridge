@@ -247,7 +247,9 @@ production. With no real-time pacing on the input, each `speed=`
 directly reports the sustained multiple of real-time that CPU can do:
 
 ```bash
-./scripts/benchmark-cpu.sh
+./scripts/benchmark-cpu.sh              # default: high-performance preset, up to 1080p60
+./scripts/benchmark-cpu.sh --low-spec   # 360p60 to 1080p30, for constrained VPS instances
+./scripts/benchmark-cpu.sh --help
 ```
 
 No container needs to be running first — it detects whichever of

@@ -4,6 +4,11 @@
 # the question "can this CPU do the transcode in real time at all" from
 # network jitter, RTSP read-blocking, and OBS-side variables.
 #
+# Usage:
+#   ./scripts/benchmark-cpu.sh              High-performance preset (up to 1080p60)
+#   ./scripts/benchmark-cpu.sh --low-spec    Low-spec preset (360p60 to 1080p30)
+#   ./scripts/benchmark-cpu.sh --help        Show this usage
+#
 # Method: generate a short synthetic AV1 clip locally (motion pattern,
 # not real gameplay -- treat this as a rough capability signal, not a
 # guarantee real footage behaves identically), then run it through the
@@ -25,6 +30,23 @@
 # Runs inside the relay container so it uses the exact same ffmpeg
 # binary/build as production.
 set -e
+
+PRESET="high-perf"
+case "$1" in
+  --low-spec)
+    PRESET="low-spec"
+    ;;
+  --help|-h)
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unknown option: $1 (see --help)"
+    exit 1
+    ;;
+esac
 
 cd "$(dirname "$0")/.."
 
@@ -80,16 +102,27 @@ fi
 echo "Using service: $SERVICE"
 echo
 
-# WIDTHxHEIGHT@FPS:BITRATE -- covers the 360p60 to 1080p30 range this
-# project targets. Edit this list to test other combinations.
-RESOLUTIONS="
+# WIDTHxHEIGHT@FPS:BITRATE lists. Edit these to test other combinations.
+LOW_SPEC_RESOLUTIONS="
 640x360@60:2500k
 854x480@30:2500k
 1280x720@30:4000k
 1920x1080@30:5000k
 "
+HIGH_PERF_RESOLUTIONS="
+1280x720@60:4500k
+1920x1080@30:5000k
+1920x1080@60:6000k
+"
+
+if [ "$PRESET" = "low-spec" ]; then
+  RESOLUTIONS="$LOW_SPEC_RESOLUTIONS"
+else
+  RESOLUTIONS="$HIGH_PERF_RESOLUTIONS"
+fi
 
 echo "Benchmarking with X264_PRESET=${X264_PRESET} (from .env), ${CLIP_SECONDS}s clips."
+echo "Preset: ${PRESET} (use --low-spec for the 360p60-1080p30 range, or --help)."
 echo "No -re on the input -- ffmpeg runs flat out, so speed= directly reflects"
 echo "the sustained multiple of real-time this CPU can do at each setting."
 echo
