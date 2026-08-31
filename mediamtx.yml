@@ -110,7 +110,7 @@ paths:
     #     below are what you'll be tuning while testing different presets.
     runOnAvailable: >
       sh -c "ffmpeg -nostdin -rtsp_transport tcp -i rtsp://127.0.0.1:8554/home
-      -c:v libx264 -preset ${X264_PRESET} -threads 0
+      -c:v libx264 -preset ${X264_PRESET} -threads 0 ${X264_EXTRA_PARAMS}
       -b:v ${OUTPUT_VIDEO_BITRATE} -maxrate ${OUTPUT_VIDEO_BITRATE} -bufsize ${OUTPUT_BUFSIZE}
       -g ${OUTPUT_KEYFRAME_INTERVAL} -keyint_min ${OUTPUT_KEYFRAME_INTERVAL} -sc_threshold 0
       -c:a aac -b:a 160k -ar 44100

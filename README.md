@@ -216,7 +216,22 @@ You'll need to find the ceiling experimentally — here's the loop:
    zeroing its lookahead buffer, which tanks real-time throughput on
    most cloud vCPUs; that's what caused speed= to decay to ~0.1x during
    initial setup.)
-6. Separately, confirm your home upload isn't the limiter: OBS's Stats
+6. Still not enough even at `ultrafast`? `X264_EXTRA_PARAMS` in `.env`
+   lets you trade compression efficiency for raw speed beyond what any
+   preset alone gives you -- compensate with a higher
+   `OUTPUT_VIDEO_BITRATE` (Twitch allows up to ~6000k for non-partners)
+   since the encoder is now spending less effort per bit:
+   - `-refs 1` -- only look at 1 reference frame instead of several.
+     Cheap, usually the first thing to try.
+   - `-bf 0` -- disable B-frames entirely. `ultrafast`/`superfast`
+     already do this, so it mainly helps at slower presets.
+   - `-coder 0` -- CAVLC instead of CABAC entropy coding. Meaningfully
+     faster, but noticeably less efficient per bit -- worth it only if
+     you have bitrate headroom to spend, and normally the last thing to
+     reach for rather than the first.
+   These stack: `X264_EXTRA_PARAMS=-refs 1 -bf 0 -coder 0` applies all
+   three. Redeploy the same way as step 4 to pick up the change.
+7. Separately, confirm your home upload isn't the limiter: OBS's Stats
    dock shows dropped frames due to network congestion — that's a
    home-bandwidth problem, not a cloud-CPU one.
 
