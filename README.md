@@ -250,6 +250,14 @@ directly reports the sustained multiple of real-time that CPU can do:
 ./scripts/benchmark-cpu.sh
 ```
 
+No container needs to be running first — it detects whichever of
+`relay`/`relay-no-tls`/`relay-local` is already up and uses that; if
+none are, it starts `relay-local` (`docker-compose.local.yml`)
+automatically, since that variant needs no cert/DuckDNS/auth setup and
+is the least likely to fail to start on a fresh checkout. Start
+production (`docker compose up -d`) yourself first if you specifically
+want the production container benchmarked instead.
+
 A DECODE ONLY column far above DECODE+ENCODE confirms libx264
 (encoding) is the actual bottleneck, not dav1d (decoding) — true for
 almost any real-world setup, since encoding does far more

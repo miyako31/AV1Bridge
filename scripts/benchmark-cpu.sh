@@ -54,18 +54,24 @@ elif docker ps --format '{{.Names}}' | grep -qx 'av1-relay-local'; then
   COMPOSE_ARGS="-f docker-compose.local.yml"
   SERVICE="relay-local"
 else
-  echo "No relay container is running -- starting the production one (docker compose up -d)..."
-  docker compose up -d
-  COMPOSE_ARGS=""
-  SERVICE="relay"
+  # Default to the local variant when auto-starting: it needs no certs,
+  # DuckDNS, or auth setup (just .env), so it's the one most likely to
+  # actually start successfully on a fresh checkout. Production has
+  # more prerequisites (issued cert, DuckDNS configured) and will fail
+  # to start without them -- start it explicitly yourself first if
+  # that's the one you want benchmarked.
+  echo "No relay container is running -- starting the local variant (docker compose -f docker-compose.local.yml up -d)..."
+  docker compose -f docker-compose.local.yml up -d
+  COMPOSE_ARGS="-f docker-compose.local.yml"
+  SERVICE="relay-local"
 
   # Give the container a moment to actually be ready for `exec` before
   # the first real command below fails on a race.
   tries=0
-  until docker compose exec -T "$SERVICE" true 2>/dev/null; do
+  until docker compose $COMPOSE_ARGS exec -T "$SERVICE" true 2>/dev/null; do
     tries=$((tries + 1))
     if [ "$tries" -ge 15 ]; then
-      echo "Container did not become ready in time. Check 'docker compose logs relay'."
+      echo "Container did not become ready in time. Check 'docker compose -f docker-compose.local.yml logs relay-local'."
       exit 1
     fi
     sleep 1
